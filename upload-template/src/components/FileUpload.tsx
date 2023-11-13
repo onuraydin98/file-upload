@@ -1,11 +1,14 @@
 import { useRef, useState } from "react"
+import axios from "axios"
 import { v4 as uuid } from "uuid"
 import toast from "react-hot-toast"
 import calcFileSize from "@/utils/file-size"
+import { Image } from "lucide-react"
 import cn from "@/utils/cn"
 import Item from "@/components/Item"
+import ProgressBar from "./ProgressBar"
 
-export type TFile = {
+export type TCustomFile = {
     id: string
     fileName: string
     fileType: string
@@ -13,32 +16,47 @@ export type TFile = {
     dateTime: string
     fileSize: string
     uploadProgress?: number
+    reader: FileReader
+    rawFile: File
+    errorMsg?: string
 }
 
 const processFile = (
     file: File,
-    onChange: React.Dispatch<React.SetStateAction<TFile[]>>,
+    onChange: React.Dispatch<React.SetStateAction<TCustomFile[]>>,
 ) => {
     const reader = new FileReader()
     const { name, type, lastModified, size } = file
     const fileId = uuid().slice(0, 8)
+    let errorOccurred = false
 
-    console.log("image", reader.result)
+    reader.onloadstart = () => {
+        errorOccurred = false
+        onChange(prev => {
+            const existingFile = prev.find(prevFile => prevFile.id === fileId)
 
-    reader.onloadstart = e => {
-        console.log("load start", file.name, e)
-        onChange(prev => [
-            ...prev,
-            {
-                id: fileId,
-                fileName: name,
-                fileType: type,
-                fileImage: "",
-                dateTime: new Date(lastModified).toLocaleString("tr-TR"),
-                fileSize: calcFileSize(size),
-                uploadProgress: 0, // Initialize uploadProgress to 0
-            },
-        ])
+            if (existingFile) {
+                // Reset error state when retrying
+                existingFile.errorMsg = undefined
+                return prev
+            }
+
+            // If not a duplicate, add a new file to the state
+            return [
+                ...prev,
+                {
+                    id: fileId,
+                    fileName: name,
+                    fileType: "",
+                    dateTime: "",
+                    fileImage: "",
+                    fileSize: calcFileSize(size),
+                    uploadProgress: 0,
+                    reader: reader,
+                    rawFile: file,
+                },
+            ]
+        })
     }
 
     reader.onprogress = event => {
@@ -55,13 +73,32 @@ const processFile = (
         }
     }
 
-    reader.onloadend = () => {
+    reader.onload = () => {
         // Set uploadProgress to 100 when the file is fully loaded
+        if (errorOccurred) {
+            onChange(prev =>
+                prev.map(prevFile =>
+                    prevFile.id === fileId
+                        ? {
+                              ...prevFile,
+                              errorMsg: "An error happens when reading file!",
+                          }
+                        : prevFile,
+                ),
+            )
+
+            return
+        }
+
         onChange(prev =>
             prev.map(prevFile =>
                 prevFile.id === fileId
                     ? {
                           ...prevFile,
+                          fileType: type,
+                          dateTime: new Date(lastModified).toLocaleString(
+                              "tr-TR",
+                          ),
                           uploadProgress: 100,
                           fileImage: reader.result as string,
                       }
@@ -72,31 +109,16 @@ const processFile = (
         console.log("load ended", file.name)
     }
 
-    // reader.onload = () => {
-    //     onChange(prev => [
-    //         ...prev,
-    //         {
-    //             id: fileId,
-    //             fileName: name,
-    //             fileType: type,
-    //             fileImage: reader.result as string,
-    //             dateTime: new Date(lastModified).toLocaleString("tr-TR"),
-    //             fileSize: calcFileSize(size),
-    //         },
-    //     ])
-    // }
-
-    // reader.onerror = error => {
-    //     console.error("Error reading file:", error)
-    // }
-
-    // reader.onloadstart = () => console.log("load started", file.name)
-    // reader.onloadend = () => {}
+    reader.onerror = () => {
+        errorOccurred = true
+        toast.error(`An error has occured when uploading ${file.name}`, {
+            id: "upload-error",
+        })
+    }
 
     if (calcFileSize(file.size) === "false") {
         return toast.error(`${file.name} is bigger than 50MB`, {
-            position: "bottom-right",
-            // style: { backgroundColor: "red" },
+            id: "file-size-error",
         })
     }
 
@@ -104,20 +126,90 @@ const processFile = (
 }
 
 export const FileUpload = () => {
-    const [selectedFiles, setSelectedFiles] = useState<TFile[]>([])
+    const [selectedFiles, setSelectedFiles] = useState<TCustomFile[]>([])
+    const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
+    const [uploadProgress, setUploadProgress] = useState<number>(0)
+    const [isLoading, setLoading] = useState(false)
+
+    const abortControllerRef = useRef<AbortController | null>(null)
     const dropAreaRef = useRef<HTMLDivElement | null>(null)
 
-    console.log("render")
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const handleSubmit = (e: any) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
+        setUploadProgress(0)
+        setLoading(true)
 
-        console.log("e", e)
+        try {
+            const formData = new FormData()
+            const formArray: File[] = []
+
+            // Append each selected file to the FormData object
+            selectedFiles.forEach(file => {
+                formData.append("files", file.rawFile)
+                formArray.push(file.rawFile)
+            })
+
+            // Make sure there are files to upload
+            if (formData.getAll("files").length === 0) {
+                toast.error("No files selected for upload", {
+                    id: "no-files-error",
+                })
+                return
+            }
+
+            // Abort Controller
+            const abortController = new AbortController()
+            abortControllerRef.current = abortController
+
+            const response = await axios
+                .post("https://httpbin.org/post", formData, {
+                    // Track the upload progress
+                    onUploadProgress: progressEvent => {
+                        const loaded = progressEvent.loaded
+                        const total = progressEvent.total
+                        //@ts-expect-error Will be fixed
+                        const progress = Math.round((loaded / total) * 100)
+
+                        // Update the state to track the progress
+                        setUploadProgress(progress)
+                    },
+                    signal: abortController.signal,
+                })
+                .finally(() => {
+                    setLoading(false)
+                })
+
+            // Check if the request was successful
+            if (response.status === 200) {
+                toast.success("Files uploaded successfully!", {
+                    id: "upload-success",
+                })
+                // Reset the selectedFiles state after successful upload
+                setSelectedFiles([])
+                setUploadedFiles(prev => [...prev, ...formArray])
+            } else {
+                toast.error(`Failed to upload files: ${response.statusText}`, {
+                    id: "upload-fail",
+                })
+            }
+        } catch (error) {
+            // Check if the upload was aborted by the user
+            if (axios.isCancel(error)) {
+                toast.error("Upload aborted by user", {
+                    id: "upload-abort",
+                })
+            } else {
+                toast.error(
+                    `Error during file upload: ${(error as Error).message}`,
+                    {
+                        id: "upload-error",
+                    },
+                )
+            }
+        }
     }
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        console.log("input render change")
         if (e.target.files && e.target.files.length > 0) {
             Array.from(e.target.files).forEach(file => {
                 if (!file) return
@@ -127,12 +219,13 @@ export const FileUpload = () => {
     }
 
     const handleDeleteSelectedFile = (id: string) => {
-        // TODO: Change below
-        if (window.confirm("Are you sure you want to delete this Image?")) {
+        if (window.confirm("Are you sure you want to delete this file?")) {
             const result = selectedFiles.filter(data => data.id !== id)
             setSelectedFiles(result)
         }
     }
+
+    const handleAbortUpload = () => abortControllerRef.current?.abort()
 
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault()
@@ -164,58 +257,116 @@ export const FileUpload = () => {
         }
     }
 
+    console.log("overAll Progress", uploadProgress)
+    // uploadedFiles.forEach(e => console.log("uploaded", e))
+    console.log("form", uploadedFiles)
+
     return (
-        <form className="p-4" onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit}>
             <div className="flex py-4">
                 <div
-                    ref={dropAreaRef}
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
                     className={cn(
-                        "fixed inset-8 m-auto flex max-h-[45%] w-[45%] justify-center rounded-lg border border-dashed border-gray-900/25 px-6 py-10",
-                        selectedFiles.length > 0 && "m-[unset]",
+                        "fixed inset-8 h-fit w-[45%] translate-x-[60%] translate-y-0 space-y-8 transition-transform duration-300",
+                        selectedFiles.length > 0 &&
+                            "translate-x-0 translate-y-0",
+                        // !selectedFiles.length &&
+                        //     uploadedFiles.length > 0 &&
+                        //     "-translate-y-[30%] translate-x-0",
                     )}
                 >
-                    <div className="text-center">
-                        {/* Move svg into another file */}
-                        <svg
-                            className="mx-auto h-12 w-12 text-gray-300"
-                            viewBox="0 0 24 24"
-                            fill="currentColor"
-                            aria-hidden="true"
-                        >
-                            <path
-                                fillRule="evenodd"
-                                d="M1.5 6a2.25 2.25 0 012.25-2.25h16.5A2.25 2.25 0 0122.5 6v12a2.25 2.25 0 01-2.25 2.25H3.75A2.25 2.25 0 011.5 18V6zM3 16.06V18c0 .414.336.75.75.75h16.5A.75.75 0 0021 18v-1.94l-2.69-2.689a1.5 1.5 0 00-2.12 0l-.88.879.97.97a.75.75 0 11-1.06 1.06l-5.16-5.159a1.5 1.5 0 00-2.12 0L3 16.061zm10.125-7.81a1.125 1.125 0 112.25 0 1.125 1.125 0 01-2.25 0z"
-                                clipRule="evenodd"
-                            />
-                        </svg>
-                        <div className="mt-4 flex text-sm leading-6 text-gray-600">
-                            <label
-                                htmlFor="file-upload"
-                                className="relative cursor-pointer rounded-md bg-white font-semibold text-indigo-600 focus-within:outline-none focus-within:ring-2 focus-within:ring-indigo-600 focus-within:ring-offset-1 hover:text-indigo-500"
-                            >
-                                <span>Upload a file</span>
-                                <input
-                                    multiple
-                                    id="file-upload"
-                                    name="file-upload"
-                                    type="file"
-                                    className="sr-only"
-                                    onChange={handleInputChange}
-                                />
-                            </label>
-                            <p className="pl-1">or drag and drop</p>
+                    <div
+                        ref={dropAreaRef}
+                        onDragOver={handleDragOver}
+                        onDragLeave={handleDragLeave}
+                        onDrop={handleDrop}
+                        className={cn(
+                            " m-auto flex justify-center rounded-lg border border-dashed border-gray-100 px-6 py-10",
+                            selectedFiles.length > 0 && "m-[unset]",
+                        )}
+                    >
+                        <div className="text-center">
+                            <Image className="m-auto h-24 w-24 text-gray-300" />
+                            <div className="mt-4 flex text-sm leading-6 text-gray-600">
+                                <label
+                                    htmlFor="file-upload"
+                                    className="relative cursor-pointer rounded-md px-2 font-semibold text-rose-600 focus-within:outline-none focus-within:ring-2 focus-within:ring-rose-600 focus-within:ring-offset-1 hover:text-rose-500"
+                                >
+                                    <span>Add a file</span>
+                                    <input
+                                        multiple
+                                        id="file-upload"
+                                        name="file-upload"
+                                        type="file"
+                                        className="sr-only"
+                                        onChange={handleInputChange}
+                                    />
+                                </label>
+                                <p className="pl-1 text-slate-50">
+                                    or drag and drop
+                                </p>
+                            </div>
+                            <p className="text-xs leading-5 text-slate-400">
+                                up to 50MB
+                            </p>
                         </div>
-                        <p className="text-xs leading-5 text-gray-600">
-                            up to 50MB
-                        </p>
+                    </div>
+                    <div className="ml-auto flex flex-col space-y-4 rounded-lg">
+                        <div className="flex justify-between">
+                            <h2 className="text-xl font-semibold">
+                                Uploaded Files
+                            </h2>
+                            {isLoading && (
+                                <button
+                                    type="button"
+                                    onClick={handleAbortUpload}
+                                    className="rounded-lg border border-rose-300 px-2 py-1 text-rose-300 hover:bg-rose-300 hover:text-rose-500 disabled:cursor-not-allowed disabled:text-rose-600"
+                                >
+                                    Abort Upload
+                                </button>
+                            )}
+                        </div>
+
+                        {
+                            <ProgressBar
+                                progress={uploadProgress}
+                                isAborted={
+                                    abortControllerRef.current?.signal
+                                        .aborted || false
+                                }
+                                isError={false}
+                            />
+                        }
+
+                        {uploadedFiles.length > 0 && (
+                            <ul className="max-h-[40dvh] divide-y divide-gray-100 overflow-y-auto overscroll-contain">
+                                {uploadedFiles.map(file => (
+                                    <li
+                                        key={`${file.name}-${
+                                            Math.random() * 100
+                                        }`}
+                                        className="flex justify-between py-2"
+                                    >
+                                        <p>{file.name}</p>
+                                        <p>{calcFileSize(file.size)}</p>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
                     </div>
                 </div>
                 {selectedFiles.length > 0 && (
-                    <div className="ml-auto flex w-1/2 flex-col space-y-4 rounded-lg bg-indigo-100 p-4 text-indigo-600">
-                        <h2 className="text-xl font-semibold">Preview</h2>
+                    <div className="ml-auto flex w-1/2 flex-col space-y-4 rounded-lg  p-4 text-rose-600">
+                        <div className="flex justify-between border-b border-rose-300 pb-4">
+                            <h2 className="text-2xl font-semibold">Preview</h2>
+                            <button
+                                disabled={isLoading}
+                                type="submit"
+                                className="rounded-lg border border-rose-300 px-2 py-1 hover:bg-rose-300 hover:text-rose-500 disabled:cursor-not-allowed disabled:text-rose-600"
+                            >
+                                {isLoading ? "Uploading.." : "Upload"}
+                            </button>
+                        </div>
+
                         <ul className="divide-y divide-gray-100">
                             {selectedFiles.map(file => (
                                 <Item
