@@ -177,10 +177,10 @@ export const FileUpload = () => {
 
             if (!result.length) setUploadError(false)
 
-            // Reset uploadProgress states via filename based id's
-            const resultFileNames = result.map(data => data.fileName)
+            // Reset uploadProgress states via filename ids'
+            const resultFileIDs = result.map(data => data.id)
             setUploadProgress(prev =>
-                prev.filter(_ => resultFileNames.includes(_.id)),
+                prev.filter(_ => resultFileIDs.includes(_.id)),
             )
         }
     }
@@ -232,7 +232,7 @@ export const FileUpload = () => {
     }
 
     const displayUploadAbortButton = (file: TCustomFile) => {
-        // Additional UI fix for abort button while uploding
+        // Additional condition for abort button while uploding, in order to improve UX
         const progressObj = uploadProgress.find(
             progressObj => progressObj.id === file.id,
         )

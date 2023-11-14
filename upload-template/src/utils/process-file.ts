@@ -55,7 +55,7 @@ const processFile = (
     }
 
     reader.onload = () => {
-        // Set uploadProgress to 100 when the file is fully loaded
+        // If any error has been occured.
         if (errorOccurred) {
             onChange(prev =>
                 prev.map(prevFile =>
@@ -71,6 +71,7 @@ const processFile = (
             return
         }
 
+        // Complete the missing fields on load
         onChange(prev =>
             prev.map(prevFile =>
                 prevFile.id === id
@@ -86,8 +87,6 @@ const processFile = (
                     : prevFile,
             ),
         )
-        // You can add additional logic here after the file is loaded
-        console.log("load ended", file.name)
     }
 
     reader.onerror = () => {
@@ -97,6 +96,7 @@ const processFile = (
         })
     }
 
+    // File size check
     if (calcFileSize(file.size) === "false") {
         return toast.error(`${file.name} is bigger than 50MB`, {
             id: "file-size-error",
@@ -105,6 +105,7 @@ const processFile = (
 
     reader.readAsDataURL(file)
 
+    // Cleanup
     return () => {
         errorOccurred = false
     }

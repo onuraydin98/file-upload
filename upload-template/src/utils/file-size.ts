@@ -8,6 +8,7 @@ const calcFileSize = (bytes: number, decimals = 2) => {
     const dm = decimals < 0 ? 0 : decimals
     const sizes = ["Bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"]
 
+    // Since byte units increments logarithmically
     const unit = Math.floor(Math.log(bytes) / Math.log(kilo))
 
     return `${(bytes / Math.pow(kilo, unit)).toFixed(dm)} ${sizes[unit]}`
