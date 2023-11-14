@@ -8,6 +8,18 @@ import calcFileSize from "@/utils/file-size"
 import cn from "@/utils/cn"
 import processFile from "@/utils/process-file"
 
+type IdByFileName = {
+    id: string
+}
+
+type UploadProgress = IdByFileName & {
+    progress: number
+}
+
+type Controller = IdByFileName & {
+    controller: AbortController
+}
+
 export type TCustomFile = {
     id: string
     fileName: string
@@ -15,9 +27,9 @@ export type TCustomFile = {
     fileImage: string | null
     dateTime: string
     fileSize: string
-    uploadProgress?: number
     reader: FileReader
     rawFile: File
+    uploadProgress?: number
     errorMsg?: string
 }
 
@@ -25,24 +37,19 @@ export const FileUpload = () => {
     const [selectedFiles, setSelectedFiles] = useState<TCustomFile[]>([])
 
     const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
-    const [uploadError, setUploadError] = useState<boolean[]>(
-        Array.from({ length: selectedFiles.length }, () => false),
-    )
-    const [uploadProgress, setUploadProgress] = useState<number[]>([])
+    const [uploadError, setUploadError] = useState<boolean>(false)
+    const [uploadProgress, setUploadProgress] = useState<UploadProgress[]>([])
 
     const [isLoading, setLoading] = useState(false)
 
-    const abortControllersRef = useRef<(AbortController | null)[]>([])
+    const abortControllersRef = useRef<Controller[]>([])
     const inputRef = useRef<HTMLInputElement | null>(null)
     const dropAreaRef = useRef<HTMLDivElement | null>(null)
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
-        setUploadProgress(Array.from({ length: selectedFiles.length }, () => 0))
-        setUploadError(
-            Array.from({ length: selectedFiles.length }, () => false),
-        )
         setLoading(true)
+        setUploadError(false)
 
         try {
             await Promise.allSettled(
@@ -64,8 +71,10 @@ export const FileUpload = () => {
 
                     // Abort Controller
                     const abortController = new AbortController()
-
-                    abortControllersRef.current[index] = abortController
+                    abortControllersRef.current[index] = {
+                        id: file.fileName,
+                        controller: abortController,
+                    }
 
                     const response = await axios.post(
                         "https://httpbin.org/post",
@@ -82,8 +91,13 @@ export const FileUpload = () => {
 
                                 // Update the state to track the progress
                                 setUploadProgress(prev =>
-                                    prev.map((prevProgress, i) =>
-                                        i === index ? progress : prevProgress,
+                                    prev.map(prevProgress =>
+                                        prevProgress.id === file.fileName
+                                            ? {
+                                                  ...prevProgress,
+                                                  progress: progress,
+                                              }
+                                            : prevProgress,
                                     ),
                                 )
                             },
@@ -93,57 +107,44 @@ export const FileUpload = () => {
 
                     // Check if the request was successful
                     if (response.status === 200) {
-                        toast.success(
-                            `${file.fileName} uploaded successfully!`,
-                            {
-                                id: "upload-success",
-                            },
-                        )
+                        toast.success(`${file.fileName} uploaded successfully!`)
                         // Filter selectedFiles state after successful upload individually
                         setSelectedFiles(prev =>
-                            prev.filter(temp => temp.id !== file.id),
+                            prev.filter(_ => _.id !== file.id),
                         )
                         setUploadedFiles(prev => [...prev, ...formArray])
                     } else {
                         const errorMessage = `Failed to upload ${file.fileName}`
-                        setUploadError(prevErrors => {
-                            const newErrors = [...prevErrors]
-                            newErrors[index] = true
-                            return newErrors
-                        })
                         toast.error(errorMessage, {
                             id: `upload-fail-${file.id}`,
                         })
                     }
                 }),
             ).then(res => {
-                // Process results and update uploadError state
+                setUploadProgress(prev =>
+                    prev.filter(prevProgress => prevProgress.progress !== 100),
+                )
+                // Process results and error handling
                 const errorArray = res.map(
                     result => result.status === "rejected",
                 )
-                setUploadError(errorArray)
 
                 if (errorArray.length > 0 && errorArray.some(val => val)) {
+                    setUploadError(true)
                     toast.error("Some files can not be uploaded!", {
                         id: `upload-error-all-settled`,
                     })
                 }
+                setLoading(false)
             })
-            setLoading(false)
         } catch (error) {
             // Check if the upload was aborted by the user
-            if (axios.isCancel(error)) {
-                toast.error("Upload aborted by user", {
-                    id: "upload-abort",
-                })
-            } else {
-                toast.error(
-                    `Error during file upload: ${(error as Error).message}`,
-                    {
-                        id: "upload-error",
-                    },
-                )
-            }
+            toast.error(
+                `Error during file upload: ${(error as Error).message}`,
+                {
+                    id: "upload-error",
+                },
+            )
         }
     }
 
@@ -151,7 +152,10 @@ export const FileUpload = () => {
         if (e.target.files && e.target.files.length > 0) {
             Array.from(e.target.files).forEach(file => {
                 if (!file) return
-                setUploadProgress(prev => [...prev, 0])
+                setUploadProgress(prev => [
+                    ...prev,
+                    { id: file.name, progress: 0 },
+                ])
                 processFile(file, setSelectedFiles)
             })
             if (!inputRef.current) return
@@ -163,14 +167,35 @@ export const FileUpload = () => {
         if (window.confirm("Are you sure you want to delete this file?")) {
             const result = selectedFiles.filter(data => data.id !== id)
             setSelectedFiles(result)
+
+            if (!result.length) setUploadError(false)
+
+            // Reset uploadProgress states via filename based id's
+            const resultFileNames = result.map(data => data.fileName)
             setUploadProgress(prev =>
-                prev.filter((_, i) => i !== result.length),
+                prev.filter(_ => resultFileNames.includes(_.id)),
             )
+            // abortControllersRef.current = abortControllersRef.current.filter(
+            //     controllerObj => resultFileNames.includes(controllerObj.id),
+            // )
         }
     }
+    console.log("abortControllRef", abortControllersRef)
 
-    const handleAbortUpload = (index: number) =>
-        abortControllersRef.current[index]?.abort()
+    // console.log("uploadProgress", uploadProgress)
+    console.log("uploadError", uploadError)
+    console.log("selected", selectedFiles)
+
+    const handleAbortUpload = (id: string) => {
+        const controllerCurrent = abortControllersRef.current.find(val => {
+            return val.id === id
+        })
+        controllerCurrent?.controller.abort()
+
+        toast.error(`${id} upload aborted by user`, {
+            id: "upload-abort",
+        })
+    }
 
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault()
@@ -197,8 +222,14 @@ export const FileUpload = () => {
         if (e.dataTransfer.files.length > 0) {
             Array.from(e.dataTransfer.files).forEach(file => {
                 if (!file) return
-                setUploadProgress(prev => [...prev, 0])
+                setUploadProgress(prev => [
+                    ...prev,
+                    { id: file.name, progress: 0 },
+                ])
                 processFile(file, setSelectedFiles)
+
+                if (!inputRef.current) return
+                inputRef.current.value = ""
             })
         }
     }
@@ -250,57 +281,78 @@ export const FileUpload = () => {
                             </p>
                         </div>
                     </div>
-                    {
-                        <div className="ml-auto flex flex-col space-y-4 rounded-lg">
-                            <div className="flex justify-between">
+                    {(uploadedFiles.length > 0 || selectedFiles.length > 0) && (
+                        <div className=" ml-auto flex flex-col space-y-4 rounded-lg">
+                            <div className="flex justify-between border-b border-slate-50 pb-2">
                                 <h2 className="text-xl font-semibold">
                                     Uploaded Files
                                 </h2>
-                                {isLoading && (
-                                    <>
-                                        {selectedFiles.map((_, index) => (
-                                            <button
-                                                key={_.id}
-                                                type="button"
-                                                onClick={() =>
-                                                    handleAbortUpload(index)
-                                                }
-                                                className="rounded-lg border border-rose-300 px-2 py-1 text-rose-300 hover:bg-rose-300 hover:text-rose-500 disabled:cursor-not-allowed disabled:text-rose-600"
+                            </div>
+                            <div
+                                id="uploaded-file-list"
+                                className="max-h-[calc(100dvh-400px)] space-y-4 overflow-y-auto overscroll-contain"
+                            >
+                                {selectedFiles.map((_, idx) => (
+                                    <div
+                                        key={`progress-upload-${idx}`}
+                                        className="flex-col gap-4"
+                                    >
+                                        <p>{_.fileName}</p>
+                                        <div className="flex gap-4">
+                                            <div className="flex-1">
+                                                <ProgressBar
+                                                    progress={
+                                                        uploadProgress.find(
+                                                            obj =>
+                                                                obj.id ===
+                                                                _.fileName,
+                                                        )?.progress ?? 0
+                                                    }
+                                                    isAborted={
+                                                        abortControllersRef.current.find(
+                                                            val =>
+                                                                val.id ===
+                                                                _.fileName,
+                                                        )?.controller.signal
+                                                            .aborted || false
+                                                    }
+                                                    isError={uploadError}
+                                                />
+                                            </div>
+                                            {isLoading && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        handleAbortUpload(
+                                                            _.fileName,
+                                                        )
+                                                    }
+                                                    className="rounded-lg border border-rose-300 px-2 py-1 text-rose-300 hover:bg-rose-300 hover:text-rose-500 disabled:cursor-not-allowed disabled:text-rose-600"
+                                                >
+                                                    Abort
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                                {uploadedFiles.length > 0 && (
+                                    <ul className=" divide-y divide-gray-100">
+                                        {uploadedFiles.map(file => (
+                                            <li
+                                                key={`${file.name}-${
+                                                    Math.random() * 100
+                                                }`}
+                                                className="flex justify-between py-2"
                                             >
-                                                Abort Upload
-                                            </button>
+                                                <p>{file.name}</p>
+                                                <p>{calcFileSize(file.size)}</p>
+                                            </li>
                                         ))}
-                                    </>
+                                    </ul>
                                 )}
                             </div>
-                            {selectedFiles.map((_, idx) => (
-                                <ProgressBar
-                                    key={`progress-${idx}`}
-                                    progress={uploadProgress[idx]}
-                                    isAborted={
-                                        abortControllersRef.current[idx]?.signal
-                                            ?.aborted || false
-                                    }
-                                    isError={uploadError[idx]}
-                                />
-                            ))}
-                            {uploadedFiles.length > 0 && (
-                                <ul className="max-h-[40dvh] divide-y divide-gray-100 overflow-y-auto overscroll-contain">
-                                    {uploadedFiles.map(file => (
-                                        <li
-                                            key={`${file.name}-${
-                                                Math.random() * 100
-                                            }`}
-                                            className="flex justify-between py-2"
-                                        >
-                                            <p>{file.name}</p>
-                                            <p>{calcFileSize(file.size)}</p>
-                                        </li>
-                                    ))}
-                                </ul>
-                            )}
                         </div>
-                    }
+                    )}
                 </div>
                 {selectedFiles.length > 0 && (
                     <div className="ml-auto flex w-1/2 flex-col space-y-4 rounded-lg  p-4 text-rose-600">
@@ -311,10 +363,10 @@ export const FileUpload = () => {
                                 type="submit"
                                 className="rounded-lg border border-rose-300 px-2 py-1 hover:bg-rose-300 hover:text-rose-500 disabled:cursor-not-allowed disabled:text-rose-600"
                             >
-                                {uploadError.some(val => val) ? (
+                                {uploadError ? (
                                     <RotateCcw
                                         size="2rem"
-                                        className="text-rose-300 group-hover:text-rose-400"
+                                        className="text-rose-300 hover:text-slate-50"
                                     />
                                 ) : isLoading ? (
                                     "Uploading.."
@@ -330,6 +382,7 @@ export const FileUpload = () => {
                                     key={file.id}
                                     file={file}
                                     onRemove={handleDeleteSelectedFile}
+                                    isLoading={isLoading}
                                 />
                             ))}
                         </ul>

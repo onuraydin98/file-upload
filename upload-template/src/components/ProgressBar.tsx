@@ -10,7 +10,7 @@ const ProgressBar = ({
     isError: boolean
 }) => {
     return (
-        <div className="relative max-w-[80%] pt-1">
+        <div className="relative pt-1">
             <div className="flex gap-2">
                 <div className="flex w-full rounded-lg bg-white shadow">
                     <div
@@ -27,11 +27,11 @@ const ProgressBar = ({
                     <span
                         className={cn(
                             "inline-block rounded-lg bg-teal-300 px-2 py-1 text-xs font-semibold uppercase text-teal-600",
-                            (isError || isAborted) &&
+                            (isError || isAborted || progress === 0) &&
                                 "bg-rose-300 text-rose-600",
                         )}
                     >
-                        {`${isError ? 0 : progress.toFixed(2)}%`}
+                        {`${progress.toFixed(2)}%`}
                     </span>
                 </div>
             </div>

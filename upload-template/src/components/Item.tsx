@@ -6,16 +6,17 @@ import type { TCustomFile } from "@/components/FileUpload"
 interface Props extends HTMLAttributes<HTMLDivElement> {
     file: TCustomFile
     onRemove: (id: string) => void
+    isLoading: boolean
 }
 
-const Item = ({ file, onRemove }: Props) => {
+const Item = ({ file, onRemove, isLoading }: Props) => {
     const { reader, rawFile } = file
     const [isAborted, setAborted] = useState(false)
 
     const handleAbortButtonDisplay = () => {
-        if (reader.readyState === reader.DONE) return false
-        if (file.errorMsg) return false
-        if (isAborted) return false
+        if (reader.readyState === reader.DONE || file.errorMsg || isAborted) {
+            return false
+        }
 
         return true
     }
@@ -107,7 +108,8 @@ const Item = ({ file, onRemove }: Props) => {
                         )}
                         <button
                             type="button"
-                            className="group "
+                            disabled={isLoading}
+                            className="group disabled:cursor-not-allowed"
                             onClick={() => onRemove(file.id)}
                         >
                             <Trash2
