@@ -17,10 +17,6 @@ type UploadProgress = IdByFileName & {
     progress: number
 }
 
-// type UploadError = IdByFileName & {
-//     error: number
-// }
-
 type Controller = IdByFileName & {
     controller: AbortController
 }
@@ -42,7 +38,7 @@ export const FileUpload = () => {
     const [selectedFiles, setSelectedFiles] = useState<TCustomFile[]>([])
 
     const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
-    // const [uploadError, setUploadError] = useState<UploadError[]>([])
+    const [uploadError, setUploadError] = useState(false)
     const [uploadProgress, setUploadProgress] = useState<UploadProgress[]>([])
 
     const [isLoading, setLoading] = useState(false)
@@ -54,7 +50,7 @@ export const FileUpload = () => {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         setLoading(true)
-        // setUploadError()
+        setUploadError(false)
 
         try {
             await Promise.allSettled(
@@ -131,6 +127,7 @@ export const FileUpload = () => {
                                 )
                             } else {
                                 // Other errors
+                                setUploadError(true)
                                 const errorMessage = `Failed to upload ${file.fileName}`
 
                                 toast.error(errorMessage, {
@@ -146,6 +143,7 @@ export const FileUpload = () => {
                 )
             })
         } catch (error) {
+            setUploadError(true)
             toast.error(
                 `Error during file upload: ${(error as Error).message}`,
                 {
@@ -177,7 +175,7 @@ export const FileUpload = () => {
             const result = selectedFiles.filter(data => data.id !== id)
             setSelectedFiles(result)
 
-            // if (!result.length) setUploadError([])
+            if (!result.length) setUploadError(false)
 
             // Reset uploadProgress states via filename based id's
             const resultFileNames = result.map(data => data.fileName)
@@ -186,11 +184,6 @@ export const FileUpload = () => {
             )
         }
     }
-    console.log("abortControllRef", abortControllersRef)
-
-    console.log("uploadProgress", uploadProgress)
-    // console.log("uploadError", uploadError)
-    // console.log("selected", selectedFiles)
 
     const handleAbortUpload = (id: string) => {
         const controllerCurrent = abortControllersRef.current.find(val => {
@@ -238,6 +231,17 @@ export const FileUpload = () => {
         }
     }
 
+    const displayUploadAbortButton = (file: TCustomFile) => {
+        // Additional UI fix for abort button while uploding
+        const progressObj = uploadProgress.find(
+            progressObj => progressObj.id === file.id,
+        )
+
+        if (progressObj?.progress === 100) return false
+
+        return true
+    }
+
     return (
         <form onSubmit={handleSubmit}>
             <div className="flex py-4">
@@ -249,6 +253,7 @@ export const FileUpload = () => {
                     )}
                 >
                     <div
+                        id="drop-area"
                         ref={dropAreaRef}
                         onDragOver={handleDragOver}
                         onDragLeave={handleDragLeave}
@@ -320,22 +325,25 @@ export const FileUpload = () => {
                                                         )?.controller.signal
                                                             .aborted || false
                                                     }
-                                                    isError={false}
+                                                    isError={uploadError}
                                                 />
                                             </div>
-                                            {isLoading && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                        handleAbortUpload(
-                                                            file.id,
-                                                        )
-                                                    }
-                                                    className="rounded-lg border border-rose-300 px-2 py-1 text-rose-300 hover:bg-rose-300 hover:text-rose-500 disabled:cursor-not-allowed disabled:text-rose-600"
-                                                >
-                                                    Abort
-                                                </button>
-                                            )}
+                                            {isLoading &&
+                                                displayUploadAbortButton(
+                                                    file,
+                                                ) && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            handleAbortUpload(
+                                                                file.id,
+                                                            )
+                                                        }
+                                                        className="rounded-lg border border-rose-300 px-2 py-1 text-rose-300 hover:bg-rose-300 hover:text-rose-500 disabled:cursor-not-allowed disabled:text-rose-600"
+                                                    >
+                                                        Abort
+                                                    </button>
+                                                )}
                                         </div>
                                     </div>
                                 ))}
@@ -363,12 +371,13 @@ export const FileUpload = () => {
                         <div className="flex justify-between border-b border-rose-300 pb-4">
                             <h2 className="text-2xl font-semibold">Preview</h2>
                             <button
+                                name="upload"
+                                role="button"
                                 disabled={isLoading}
                                 type="submit"
                                 className="rounded-lg border border-rose-300 px-2 py-1 hover:bg-rose-300 hover:text-rose-500 disabled:cursor-not-allowed disabled:text-rose-600"
                             >
-                                {/* TODO: Fix below */}
-                                {false ? (
+                                {uploadError ? (
                                     <RotateCcw
                                         size="2rem"
                                         className="text-rose-300 hover:text-slate-50"

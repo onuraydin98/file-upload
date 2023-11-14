@@ -107,6 +107,7 @@ const Item = ({ file, onRemove, isLoading }: Props) => {
                             </span>
                         )}
                         <button
+                            id="remove-button"
                             type="button"
                             disabled={isLoading}
                             className="group disabled:cursor-not-allowed"

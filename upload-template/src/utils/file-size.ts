@@ -1,4 +1,4 @@
-const THRESHOlD = 70000000 as const
+const THRESHOlD = 50000000 as const
 
 const calcFileSize = (bytes: number, decimals = 2) => {
     if (bytes >= THRESHOlD) return "false"
