@@ -1,7 +1,7 @@
 import { useRef, useState } from "react"
 import axios from "axios"
 import toast from "react-hot-toast"
-import { Image } from "lucide-react"
+import { Image, RotateCcw } from "lucide-react"
 import ProgressBar from "./ProgressBar"
 import Item from "@/components/Item"
 import calcFileSize from "@/utils/file-size"
@@ -23,75 +23,113 @@ export type TCustomFile = {
 
 export const FileUpload = () => {
     const [selectedFiles, setSelectedFiles] = useState<TCustomFile[]>([])
+
     const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
-    const [uploadProgress, setUploadProgress] = useState<number>(0)
-    const [uploadError, setUploadError] = useState(false)
+    const [uploadError, setUploadError] = useState<boolean[]>(
+        Array.from({ length: selectedFiles.length }, () => false),
+    )
+    const [uploadProgress, setUploadProgress] = useState<number[]>([])
+
     const [isLoading, setLoading] = useState(false)
 
+    const abortControllersRef = useRef<(AbortController | null)[]>([])
     const inputRef = useRef<HTMLInputElement | null>(null)
     const dropAreaRef = useRef<HTMLDivElement | null>(null)
-    const abortControllerRef = useRef<AbortController | null>(null)
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
-        setUploadProgress(0)
-        setUploadError(false)
+        setUploadProgress(Array.from({ length: selectedFiles.length }, () => 0))
+        setUploadError(
+            Array.from({ length: selectedFiles.length }, () => false),
+        )
         setLoading(true)
 
         try {
-            const formData = new FormData()
-            const formArray: File[] = []
+            await Promise.allSettled(
+                selectedFiles.map(async (file, index) => {
+                    const formData = new FormData()
+                    const formArray: File[] = []
 
-            // Append each selected file to the FormData object
-            selectedFiles.forEach(file => {
-                formData.append("files", file.rawFile)
-                formArray.push(file.rawFile)
+                    // Append each selected file to the FormData object
+                    formData.append("files", file.rawFile)
+                    formArray.push(file.rawFile)
+
+                    // Make sure there are files to upload
+                    if (formData.getAll("files").length === 0) {
+                        toast.error("No files selected for upload", {
+                            id: "no-files-error",
+                        })
+                        return
+                    }
+
+                    // Abort Controller
+                    const abortController = new AbortController()
+
+                    abortControllersRef.current[index] = abortController
+
+                    const response = await axios.post(
+                        "https://httpbin.org/post",
+                        formData,
+                        {
+                            // Track the upload progress
+                            onUploadProgress: progressEvent => {
+                                const loaded = progressEvent.loaded
+                                const total = progressEvent.total
+                                const progress = Math.round(
+                                    //@ts-expect-error Total
+                                    (loaded / total) * 100,
+                                )
+
+                                // Update the state to track the progress
+                                setUploadProgress(prev =>
+                                    prev.map((prevProgress, i) =>
+                                        i === index ? progress : prevProgress,
+                                    ),
+                                )
+                            },
+                            signal: abortController.signal,
+                        },
+                    )
+
+                    // Check if the request was successful
+                    if (response.status === 200) {
+                        toast.success(
+                            `${file.fileName} uploaded successfully!`,
+                            {
+                                id: "upload-success",
+                            },
+                        )
+                        // Filter selectedFiles state after successful upload individually
+                        setSelectedFiles(prev =>
+                            prev.filter(temp => temp.id !== file.id),
+                        )
+                        setUploadedFiles(prev => [...prev, ...formArray])
+                    } else {
+                        const errorMessage = `Failed to upload ${file.fileName}`
+                        setUploadError(prevErrors => {
+                            const newErrors = [...prevErrors]
+                            newErrors[index] = true
+                            return newErrors
+                        })
+                        toast.error(errorMessage, {
+                            id: `upload-fail-${file.id}`,
+                        })
+                    }
+                }),
+            ).then(res => {
+                // Process results and update uploadError state
+                const errorArray = res.map(
+                    result => result.status === "rejected",
+                )
+                setUploadError(errorArray)
+
+                if (errorArray.length > 0 && errorArray.some(val => val)) {
+                    toast.error("Some files can not be uploaded!", {
+                        id: `upload-error-all-settled`,
+                    })
+                }
             })
-
-            // Make sure there are files to upload
-            if (formData.getAll("files").length === 0) {
-                toast.error("No files selected for upload", {
-                    id: "no-files-error",
-                })
-                return
-            }
-
-            // Abort Controller
-            const abortController = new AbortController()
-            abortControllerRef.current = abortController
-
-            const response = await axios
-                .post("https://httpbin.org/post", formData, {
-                    // Track the upload progress
-                    onUploadProgress: progressEvent => {
-                        const loaded = progressEvent.loaded
-                        const total = progressEvent.total
-                        //@ts-expect-error Will be fixed
-                        const progress = Math.round((loaded / total) * 100)
-
-                        // Update the state to track the progress
-                        setUploadProgress(progress)
-                    },
-                    signal: abortController.signal,
-                })
-                .finally(() => {
-                    setLoading(false)
-                })
-
-            // Check if the request was successful
-            if (response.status === 200) {
-                toast.success("Files uploaded successfully!", {
-                    id: "upload-success",
-                })
-                // Reset the selectedFiles state after successful upload
-                setSelectedFiles([])
-                setUploadedFiles(prev => [...prev, ...formArray])
-            } else {
-                setUploadError(true)
-                toast.error(`Failed to upload files: ${response.statusText}`, {
-                    id: "upload-fail",
-                })
-            }
+            setLoading(false)
         } catch (error) {
             // Check if the upload was aborted by the user
             if (axios.isCancel(error)) {
@@ -99,7 +137,6 @@ export const FileUpload = () => {
                     id: "upload-abort",
                 })
             } else {
-                setUploadError(true)
                 toast.error(
                     `Error during file upload: ${(error as Error).message}`,
                     {
@@ -114,6 +151,7 @@ export const FileUpload = () => {
         if (e.target.files && e.target.files.length > 0) {
             Array.from(e.target.files).forEach(file => {
                 if (!file) return
+                setUploadProgress(prev => [...prev, 0])
                 processFile(file, setSelectedFiles)
             })
             if (!inputRef.current) return
@@ -125,10 +163,14 @@ export const FileUpload = () => {
         if (window.confirm("Are you sure you want to delete this file?")) {
             const result = selectedFiles.filter(data => data.id !== id)
             setSelectedFiles(result)
+            setUploadProgress(prev =>
+                prev.filter((_, i) => i !== result.length),
+            )
         }
     }
 
-    const handleAbortUpload = () => abortControllerRef.current?.abort()
+    const handleAbortUpload = (index: number) =>
+        abortControllersRef.current[index]?.abort()
 
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault()
@@ -155,6 +197,7 @@ export const FileUpload = () => {
         if (e.dataTransfer.files.length > 0) {
             Array.from(e.dataTransfer.files).forEach(file => {
                 if (!file) return
+                setUploadProgress(prev => [...prev, 0])
                 processFile(file, setSelectedFiles)
             })
         }
@@ -194,7 +237,7 @@ export const FileUpload = () => {
                                         id="file-upload"
                                         name="file-upload"
                                         type="file"
-                                        // className="sr-only"
+                                        className="sr-only"
                                         onChange={handleInputChange}
                                     />
                                 </label>
@@ -214,23 +257,33 @@ export const FileUpload = () => {
                                     Uploaded Files
                                 </h2>
                                 {isLoading && (
-                                    <button
-                                        type="button"
-                                        onClick={handleAbortUpload}
-                                        className="rounded-lg border border-rose-300 px-2 py-1 text-rose-300 hover:bg-rose-300 hover:text-rose-500 disabled:cursor-not-allowed disabled:text-rose-600"
-                                    >
-                                        Abort Upload
-                                    </button>
+                                    <>
+                                        {selectedFiles.map((_, index) => (
+                                            <button
+                                                key={_.id}
+                                                type="button"
+                                                onClick={() =>
+                                                    handleAbortUpload(index)
+                                                }
+                                                className="rounded-lg border border-rose-300 px-2 py-1 text-rose-300 hover:bg-rose-300 hover:text-rose-500 disabled:cursor-not-allowed disabled:text-rose-600"
+                                            >
+                                                Abort Upload
+                                            </button>
+                                        ))}
+                                    </>
                                 )}
                             </div>
-                            <ProgressBar
-                                progress={uploadProgress}
-                                isAborted={
-                                    abortControllerRef.current?.signal
-                                        .aborted || false
-                                }
-                                isError={uploadError}
-                            />
+                            {selectedFiles.map((_, idx) => (
+                                <ProgressBar
+                                    key={`progress-${idx}`}
+                                    progress={uploadProgress[idx]}
+                                    isAborted={
+                                        abortControllersRef.current[idx]?.signal
+                                            ?.aborted || false
+                                    }
+                                    isError={uploadError[idx]}
+                                />
+                            ))}
                             {uploadedFiles.length > 0 && (
                                 <ul className="max-h-[40dvh] divide-y divide-gray-100 overflow-y-auto overscroll-contain">
                                     {uploadedFiles.map(file => (
@@ -258,7 +311,16 @@ export const FileUpload = () => {
                                 type="submit"
                                 className="rounded-lg border border-rose-300 px-2 py-1 hover:bg-rose-300 hover:text-rose-500 disabled:cursor-not-allowed disabled:text-rose-600"
                             >
-                                {isLoading ? "Uploading.." : "Upload"}
+                                {uploadError.some(val => val) ? (
+                                    <RotateCcw
+                                        size="2rem"
+                                        className="text-rose-300 group-hover:text-rose-400"
+                                    />
+                                ) : isLoading ? (
+                                    "Uploading.."
+                                ) : (
+                                    "Upload"
+                                )}
                             </button>
                         </div>
 

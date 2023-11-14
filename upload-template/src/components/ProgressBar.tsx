@@ -15,7 +15,7 @@ const ProgressBar = ({
                 <div className="flex w-full rounded-lg bg-white shadow">
                     <div
                         style={{
-                            width: `${isAborted || isError ? 10 : progress}%`,
+                            width: `${progress}%`,
                         }}
                         className={cn(
                             "whitespace-nowrap rounded-lg bg-teal-500 py-2 text-center text-white shadow-none",
