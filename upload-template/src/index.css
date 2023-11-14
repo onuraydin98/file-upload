@@ -4,6 +4,10 @@
 
 @layer components {
     .dragover {
-        @apply bg-slate-100;
+        @apply bg-rose-400 bg-opacity-20;
     }
+}
+
+#uploaded-file-list::-webkit-scrollbar {
+    display: none;
 }
