@@ -2,6 +2,7 @@ import { useRef, useState } from "react"
 import axios from "axios"
 import toast from "react-hot-toast"
 import { Image, RotateCcw } from "lucide-react"
+import { v4 as uuid } from "uuid"
 import ProgressBar from "./ProgressBar"
 import Item from "@/components/Item"
 import calcFileSize from "@/utils/file-size"
@@ -15,6 +16,10 @@ type IdByFileName = {
 type UploadProgress = IdByFileName & {
     progress: number
 }
+
+// type UploadError = IdByFileName & {
+//     error: number
+// }
 
 type Controller = IdByFileName & {
     controller: AbortController
@@ -37,7 +42,7 @@ export const FileUpload = () => {
     const [selectedFiles, setSelectedFiles] = useState<TCustomFile[]>([])
 
     const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
-    const [uploadError, setUploadError] = useState<boolean>(false)
+    // const [uploadError, setUploadError] = useState<UploadError[]>([])
     const [uploadProgress, setUploadProgress] = useState<UploadProgress[]>([])
 
     const [isLoading, setLoading] = useState(false)
@@ -49,7 +54,7 @@ export const FileUpload = () => {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         setLoading(true)
-        setUploadError(false)
+        // setUploadError()
 
         try {
             await Promise.allSettled(
@@ -72,27 +77,24 @@ export const FileUpload = () => {
                     // Abort Controller
                     const abortController = new AbortController()
                     abortControllersRef.current[index] = {
-                        id: file.fileName,
+                        id: file.id,
                         controller: abortController,
                     }
 
-                    const response = await axios.post(
-                        "https://httpbin.org/post",
-                        formData,
-                        {
+                    await axios
+                        .post("https://httpbin.org/post", formData, {
                             // Track the upload progress
                             onUploadProgress: progressEvent => {
                                 const loaded = progressEvent.loaded
                                 const total = progressEvent.total
                                 const progress = Math.round(
-                                    //@ts-expect-error Total
-                                    (loaded / total) * 100,
+                                    (loaded / (total ?? loaded)) * 100,
                                 )
 
                                 // Update the state to track the progress
                                 setUploadProgress(prev =>
                                     prev.map(prevProgress =>
-                                        prevProgress.id === file.fileName
+                                        prevProgress.id === file.id
                                             ? {
                                                   ...prevProgress,
                                                   progress: progress,
@@ -102,43 +104,48 @@ export const FileUpload = () => {
                                 )
                             },
                             signal: abortController.signal,
-                        },
-                    )
-
-                    // Check if the request was successful
-                    if (response.status === 200) {
-                        toast.success(`${file.fileName} uploaded successfully!`)
-                        // Filter selectedFiles state after successful upload individually
-                        setSelectedFiles(prev =>
-                            prev.filter(_ => _.id !== file.id),
-                        )
-                        setUploadedFiles(prev => [...prev, ...formArray])
-                    } else {
-                        const errorMessage = `Failed to upload ${file.fileName}`
-                        toast.error(errorMessage, {
-                            id: `upload-fail-${file.id}`,
                         })
-                    }
+                        .then(response => {
+                            if (response.status === 200) {
+                                toast.success(
+                                    `${file.fileName} uploaded successfully!`,
+                                )
+                                // Filter selectedFiles state after successful upload individually
+                                setSelectedFiles(prev =>
+                                    prev.filter(_ => _.id !== file.id),
+                                )
+                                setUploadedFiles(prev => [
+                                    ...prev,
+                                    ...formArray,
+                                ])
+                            }
+                        })
+                        .catch(e => {
+                            if (axios.isCancel(e)) {
+                                // Request was canceled by the user
+                                toast.error(
+                                    `${file.fileName} upload is aborted by user`,
+                                    {
+                                        id: "upload-abort",
+                                    },
+                                )
+                            } else {
+                                // Other errors
+                                const errorMessage = `Failed to upload ${file.fileName}`
+
+                                toast.error(errorMessage, {
+                                    id: `upload-fail-${file.id}`,
+                                })
+                            }
+                        })
                 }),
-            ).then(res => {
+            ).then(() => {
+                setLoading(false)
                 setUploadProgress(prev =>
                     prev.filter(prevProgress => prevProgress.progress !== 100),
                 )
-                // Process results and error handling
-                const errorArray = res.map(
-                    result => result.status === "rejected",
-                )
-
-                if (errorArray.length > 0 && errorArray.some(val => val)) {
-                    setUploadError(true)
-                    toast.error("Some files can not be uploaded!", {
-                        id: `upload-error-all-settled`,
-                    })
-                }
-                setLoading(false)
             })
         } catch (error) {
-            // Check if the upload was aborted by the user
             toast.error(
                 `Error during file upload: ${(error as Error).message}`,
                 {
@@ -152,11 +159,13 @@ export const FileUpload = () => {
         if (e.target.files && e.target.files.length > 0) {
             Array.from(e.target.files).forEach(file => {
                 if (!file) return
+
+                const fileId = uuid().slice(0, 8)
                 setUploadProgress(prev => [
                     ...prev,
-                    { id: file.name, progress: 0 },
+                    { id: fileId, progress: 0 },
                 ])
-                processFile(file, setSelectedFiles)
+                processFile(file, setSelectedFiles, fileId)
             })
             if (!inputRef.current) return
             inputRef.current.value = ""
@@ -168,33 +177,26 @@ export const FileUpload = () => {
             const result = selectedFiles.filter(data => data.id !== id)
             setSelectedFiles(result)
 
-            if (!result.length) setUploadError(false)
+            // if (!result.length) setUploadError([])
 
             // Reset uploadProgress states via filename based id's
             const resultFileNames = result.map(data => data.fileName)
             setUploadProgress(prev =>
                 prev.filter(_ => resultFileNames.includes(_.id)),
             )
-            // abortControllersRef.current = abortControllersRef.current.filter(
-            //     controllerObj => resultFileNames.includes(controllerObj.id),
-            // )
         }
     }
     console.log("abortControllRef", abortControllersRef)
 
-    // console.log("uploadProgress", uploadProgress)
-    console.log("uploadError", uploadError)
-    console.log("selected", selectedFiles)
+    console.log("uploadProgress", uploadProgress)
+    // console.log("uploadError", uploadError)
+    // console.log("selected", selectedFiles)
 
     const handleAbortUpload = (id: string) => {
         const controllerCurrent = abortControllersRef.current.find(val => {
             return val.id === id
         })
         controllerCurrent?.controller.abort()
-
-        toast.error(`${id} upload aborted by user`, {
-            id: "upload-abort",
-        })
     }
 
     const handleDragOver = (e: React.DragEvent) => {
@@ -222,11 +224,13 @@ export const FileUpload = () => {
         if (e.dataTransfer.files.length > 0) {
             Array.from(e.dataTransfer.files).forEach(file => {
                 if (!file) return
+
+                const fileId = uuid().slice(0, 8)
                 setUploadProgress(prev => [
                     ...prev,
-                    { id: file.name, progress: 0 },
+                    { id: fileId, progress: 0 },
                 ])
-                processFile(file, setSelectedFiles)
+                processFile(file, setSelectedFiles, fileId)
 
                 if (!inputRef.current) return
                 inputRef.current.value = ""
@@ -292,12 +296,12 @@ export const FileUpload = () => {
                                 id="uploaded-file-list"
                                 className="max-h-[calc(100dvh-400px)] space-y-4 overflow-y-auto overscroll-contain"
                             >
-                                {selectedFiles.map((_, idx) => (
+                                {selectedFiles.map((file, idx) => (
                                     <div
                                         key={`progress-upload-${idx}`}
                                         className="flex-col gap-4"
                                     >
-                                        <p>{_.fileName}</p>
+                                        <p>{file.fileName}</p>
                                         <div className="flex gap-4">
                                             <div className="flex-1">
                                                 <ProgressBar
@@ -305,18 +309,18 @@ export const FileUpload = () => {
                                                         uploadProgress.find(
                                                             obj =>
                                                                 obj.id ===
-                                                                _.fileName,
+                                                                file.id,
                                                         )?.progress ?? 0
                                                     }
                                                     isAborted={
                                                         abortControllersRef.current.find(
-                                                            val =>
-                                                                val.id ===
-                                                                _.fileName,
+                                                            ref =>
+                                                                ref.id ===
+                                                                file.id,
                                                         )?.controller.signal
                                                             .aborted || false
                                                     }
-                                                    isError={uploadError}
+                                                    isError={false}
                                                 />
                                             </div>
                                             {isLoading && (
@@ -324,7 +328,7 @@ export const FileUpload = () => {
                                                     type="button"
                                                     onClick={() =>
                                                         handleAbortUpload(
-                                                            _.fileName,
+                                                            file.id,
                                                         )
                                                     }
                                                     className="rounded-lg border border-rose-300 px-2 py-1 text-rose-300 hover:bg-rose-300 hover:text-rose-500 disabled:cursor-not-allowed disabled:text-rose-600"
@@ -363,7 +367,8 @@ export const FileUpload = () => {
                                 type="submit"
                                 className="rounded-lg border border-rose-300 px-2 py-1 hover:bg-rose-300 hover:text-rose-500 disabled:cursor-not-allowed disabled:text-rose-600"
                             >
-                                {uploadError ? (
+                                {/* TODO: Fix below */}
+                                {false ? (
                                     <RotateCcw
                                         size="2rem"
                                         className="text-rose-300 hover:text-slate-50"

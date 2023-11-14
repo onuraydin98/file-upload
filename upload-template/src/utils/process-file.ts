@@ -1,23 +1,20 @@
 import toast from "react-hot-toast"
-import { v4 as uuid } from "uuid"
 import calcFileSize from "./file-size"
 import { TCustomFile } from "@/components/FileUpload"
 
 const processFile = (
     file: File,
     onChange: React.Dispatch<React.SetStateAction<TCustomFile[]>>,
+    id: string,
 ) => {
     const reader = new FileReader()
     const { name, type, lastModified, size } = file
-    const fileId = uuid().slice(0, 8)
-    let errorOccurred = false
-
-    console.log("file", file)
+    let errorOccurred: boolean
 
     reader.onloadstart = () => {
         errorOccurred = false
         onChange(prev => {
-            const existingFile = prev.find(prevFile => prevFile.id === fileId)
+            const existingFile = prev.find(prevFile => prevFile.id === id)
 
             if (existingFile) {
                 // Reset error state when retrying
@@ -29,7 +26,7 @@ const processFile = (
             return [
                 ...prev,
                 {
-                    id: fileId,
+                    id: id,
                     fileName: name,
                     fileType: "",
                     dateTime: "",
@@ -49,7 +46,7 @@ const processFile = (
             // Update the state to track progress
             onChange(prev =>
                 prev.map(prevFile =>
-                    prevFile.id === fileId
+                    prevFile.id === id
                         ? { ...prevFile, uploadProgress: progress }
                         : prevFile,
                 ),
@@ -62,7 +59,7 @@ const processFile = (
         if (errorOccurred) {
             onChange(prev =>
                 prev.map(prevFile =>
-                    prevFile.id === fileId
+                    prevFile.id === id
                         ? {
                               ...prevFile,
                               errorMsg: "An error happens when reading file!",
@@ -76,7 +73,7 @@ const processFile = (
 
         onChange(prev =>
             prev.map(prevFile =>
-                prevFile.id === fileId
+                prevFile.id === id
                     ? {
                           ...prevFile,
                           fileType: type,
@@ -107,6 +104,10 @@ const processFile = (
     }
 
     reader.readAsDataURL(file)
+
+    return () => {
+        errorOccurred = false
+    }
 }
 
 export default processFile
