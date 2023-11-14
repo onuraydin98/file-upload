@@ -1,12 +1,12 @@
 import { useRef, useState } from "react"
 import axios from "axios"
-import { v4 as uuid } from "uuid"
 import toast from "react-hot-toast"
-import calcFileSize from "@/utils/file-size"
 import { Image } from "lucide-react"
-import cn from "@/utils/cn"
-import Item from "@/components/Item"
 import ProgressBar from "./ProgressBar"
+import Item from "@/components/Item"
+import calcFileSize from "@/utils/file-size"
+import cn from "@/utils/cn"
+import processFile from "@/utils/process-file"
 
 export type TCustomFile = {
     id: string
@@ -21,122 +21,21 @@ export type TCustomFile = {
     errorMsg?: string
 }
 
-const processFile = (
-    file: File,
-    onChange: React.Dispatch<React.SetStateAction<TCustomFile[]>>,
-) => {
-    const reader = new FileReader()
-    const { name, type, lastModified, size } = file
-    const fileId = uuid().slice(0, 8)
-    let errorOccurred = false
-
-    reader.onloadstart = () => {
-        errorOccurred = false
-        onChange(prev => {
-            const existingFile = prev.find(prevFile => prevFile.id === fileId)
-
-            if (existingFile) {
-                // Reset error state when retrying
-                existingFile.errorMsg = undefined
-                return prev
-            }
-
-            // If not a duplicate, add a new file to the state
-            return [
-                ...prev,
-                {
-                    id: fileId,
-                    fileName: name,
-                    fileType: "",
-                    dateTime: "",
-                    fileImage: "",
-                    fileSize: calcFileSize(size),
-                    uploadProgress: 0,
-                    reader: reader,
-                    rawFile: file,
-                },
-            ]
-        })
-    }
-
-    reader.onprogress = event => {
-        if (event.lengthComputable) {
-            const progress = (event.loaded / event.total) * 100
-            // Update the state to track progress
-            onChange(prev =>
-                prev.map(prevFile =>
-                    prevFile.id === fileId
-                        ? { ...prevFile, uploadProgress: progress }
-                        : prevFile,
-                ),
-            )
-        }
-    }
-
-    reader.onload = () => {
-        // Set uploadProgress to 100 when the file is fully loaded
-        if (errorOccurred) {
-            onChange(prev =>
-                prev.map(prevFile =>
-                    prevFile.id === fileId
-                        ? {
-                              ...prevFile,
-                              errorMsg: "An error happens when reading file!",
-                          }
-                        : prevFile,
-                ),
-            )
-
-            return
-        }
-
-        onChange(prev =>
-            prev.map(prevFile =>
-                prevFile.id === fileId
-                    ? {
-                          ...prevFile,
-                          fileType: type,
-                          dateTime: new Date(lastModified).toLocaleString(
-                              "tr-TR",
-                          ),
-                          uploadProgress: 100,
-                          fileImage: reader.result as string,
-                      }
-                    : prevFile,
-            ),
-        )
-        // You can add additional logic here after the file is loaded
-        console.log("load ended", file.name)
-    }
-
-    reader.onerror = () => {
-        errorOccurred = true
-        toast.error(`An error has occured when uploading ${file.name}`, {
-            id: "upload-error",
-        })
-    }
-
-    if (calcFileSize(file.size) === "false") {
-        return toast.error(`${file.name} is bigger than 50MB`, {
-            id: "file-size-error",
-        })
-    }
-
-    reader.readAsDataURL(file)
-}
-
 export const FileUpload = () => {
     const [selectedFiles, setSelectedFiles] = useState<TCustomFile[]>([])
     const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
     const [uploadProgress, setUploadProgress] = useState<number>(0)
+    const [uploadError, setUploadError] = useState(false)
     const [isLoading, setLoading] = useState(false)
 
-    const abortControllerRef = useRef<AbortController | null>(null)
+    const inputRef = useRef<HTMLInputElement | null>(null)
     const dropAreaRef = useRef<HTMLDivElement | null>(null)
+    const abortControllerRef = useRef<AbortController | null>(null)
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         setUploadProgress(0)
+        setUploadError(false)
         setLoading(true)
 
         try {
@@ -188,6 +87,7 @@ export const FileUpload = () => {
                 setSelectedFiles([])
                 setUploadedFiles(prev => [...prev, ...formArray])
             } else {
+                setUploadError(true)
                 toast.error(`Failed to upload files: ${response.statusText}`, {
                     id: "upload-fail",
                 })
@@ -199,6 +99,7 @@ export const FileUpload = () => {
                     id: "upload-abort",
                 })
             } else {
+                setUploadError(true)
                 toast.error(
                     `Error during file upload: ${(error as Error).message}`,
                     {
@@ -215,6 +116,8 @@ export const FileUpload = () => {
                 if (!file) return
                 processFile(file, setSelectedFiles)
             })
+            if (!inputRef.current) return
+            inputRef.current.value = ""
         }
     }
 
@@ -257,10 +160,6 @@ export const FileUpload = () => {
         }
     }
 
-    console.log("overAll Progress", uploadProgress)
-    // uploadedFiles.forEach(e => console.log("uploaded", e))
-    console.log("form", uploadedFiles)
-
     return (
         <form onSubmit={handleSubmit}>
             <div className="flex py-4">
@@ -269,9 +168,6 @@ export const FileUpload = () => {
                         "fixed inset-8 h-fit w-[45%] translate-x-[60%] translate-y-0 space-y-8 transition-transform duration-300",
                         selectedFiles.length > 0 &&
                             "translate-x-0 translate-y-0",
-                        // !selectedFiles.length &&
-                        //     uploadedFiles.length > 0 &&
-                        //     "-translate-y-[30%] translate-x-0",
                     )}
                 >
                     <div
@@ -293,11 +189,12 @@ export const FileUpload = () => {
                                 >
                                     <span>Add a file</span>
                                     <input
+                                        ref={inputRef}
                                         multiple
                                         id="file-upload"
                                         name="file-upload"
                                         type="file"
-                                        className="sr-only"
+                                        // className="sr-only"
                                         onChange={handleInputChange}
                                     />
                                 </label>
@@ -310,49 +207,47 @@ export const FileUpload = () => {
                             </p>
                         </div>
                     </div>
-                    <div className="ml-auto flex flex-col space-y-4 rounded-lg">
-                        <div className="flex justify-between">
-                            <h2 className="text-xl font-semibold">
-                                Uploaded Files
-                            </h2>
-                            {isLoading && (
-                                <button
-                                    type="button"
-                                    onClick={handleAbortUpload}
-                                    className="rounded-lg border border-rose-300 px-2 py-1 text-rose-300 hover:bg-rose-300 hover:text-rose-500 disabled:cursor-not-allowed disabled:text-rose-600"
-                                >
-                                    Abort Upload
-                                </button>
-                            )}
-                        </div>
-
-                        {
+                    {
+                        <div className="ml-auto flex flex-col space-y-4 rounded-lg">
+                            <div className="flex justify-between">
+                                <h2 className="text-xl font-semibold">
+                                    Uploaded Files
+                                </h2>
+                                {isLoading && (
+                                    <button
+                                        type="button"
+                                        onClick={handleAbortUpload}
+                                        className="rounded-lg border border-rose-300 px-2 py-1 text-rose-300 hover:bg-rose-300 hover:text-rose-500 disabled:cursor-not-allowed disabled:text-rose-600"
+                                    >
+                                        Abort Upload
+                                    </button>
+                                )}
+                            </div>
                             <ProgressBar
                                 progress={uploadProgress}
                                 isAborted={
                                     abortControllerRef.current?.signal
                                         .aborted || false
                                 }
-                                isError={false}
+                                isError={uploadError}
                             />
-                        }
-
-                        {uploadedFiles.length > 0 && (
-                            <ul className="max-h-[40dvh] divide-y divide-gray-100 overflow-y-auto overscroll-contain">
-                                {uploadedFiles.map(file => (
-                                    <li
-                                        key={`${file.name}-${
-                                            Math.random() * 100
-                                        }`}
-                                        className="flex justify-between py-2"
-                                    >
-                                        <p>{file.name}</p>
-                                        <p>{calcFileSize(file.size)}</p>
-                                    </li>
-                                ))}
-                            </ul>
-                        )}
-                    </div>
+                            {uploadedFiles.length > 0 && (
+                                <ul className="max-h-[40dvh] divide-y divide-gray-100 overflow-y-auto overscroll-contain">
+                                    {uploadedFiles.map(file => (
+                                        <li
+                                            key={`${file.name}-${
+                                                Math.random() * 100
+                                            }`}
+                                            className="flex justify-between py-2"
+                                        >
+                                            <p>{file.name}</p>
+                                            <p>{calcFileSize(file.size)}</p>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    }
                 </div>
                 {selectedFiles.length > 0 && (
                     <div className="ml-auto flex w-1/2 flex-col space-y-4 rounded-lg  p-4 text-rose-600">
